@@ -1,36 +1,22 @@
+import warnings
 from functools import wraps
-from xml.etree.ElementTree import XML
-import json
 
-__version__ = "0.7.1"
+__version__ = "0.8.3"
 
 ALL = '*'
-ENDPOINT_URL = 'http://api.census.gov/data/%s/%s'
-DEFINITIONS = {
-    'acs5': {
-        '2013': 'http://api.census.gov/data/2013/acs5/variables.xml',
-        '2012': 'http://api.census.gov/data/2012/acs5/variables.xml',
-        '2011': 'http://api.census.gov/data/2011/acs5/variables.xml',
-        '2010': 'http://api.census.gov/data/2010/acs5/variables.xml',
-    },
-    'acs1/profile': {
-        '2012': 'http://api.census.gov/data/2012/acs1/variables.xml',
-    },
-    'sf1': {
-        '2010': 'http://api.census.gov/data/2010/sf1/variables.xml',
-        '2000': 'http://api.census.gov/data/2000/sf1/variables.xml',
-        '1990': 'http://api.census.gov/data/1990/sf1/variables.xml',
-    },
-    'sf3': {
-        '2000': 'http://api.census.gov/data/2000/sf3/variables.xml',
-        '1990': 'http://api.census.gov/data/1990/sf3/variables.xml',
-    },
-}
+
+def new_session(*args, **kwargs):
+    import requests
+    return requests.session(*args, **kwargs)
+
 
 class APIKeyError(Exception):
-    '''Invalid API Key'''
+    """ Invalid API key
+    """
+
     def __init__(self, value):
         self.value = value
+
     def __str__(self):
         return repr(self.value)
 
@@ -48,13 +34,23 @@ def supported_years(*years):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             year = kwargs.get('year', self.default_year)
-            if int(year) not in years:
-                raise UnsupportedYearException('geography is not available in %s' % year)
+            _years = years if years else self.years
+            if int(year) not in _years:
+                raise UnsupportedYearException(
+                    'Geography is not available in {}. Available years include {}'.format(year, _years))
             return func(self, *args, **kwargs)
         return wrapper
     return inner
 
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+        
+def merge(dicts):
+    return dict(item for d in dicts for item in d.items()) 
 
+        
 class CensusException(Exception):
     pass
 
@@ -64,61 +60,61 @@ class UnsupportedYearException(CensusException):
 
 
 class Client(object):
+    endpoint_url = 'https://api.census.gov/data/%s/%s'
+    definitions_url = 'https://api.census.gov/data/%s/%s/variables.json'
 
     def __init__(self, key, year=None, session=None):
-        global requests
-        import requests
+
         self._key = key
-        self.session = session or requests.session()
+        self.session = session or new_session()
         if year:
             self.default_year = year
 
-    @property
-    def years(self):
-        return [int(y) for y in DEFINITIONS[self.dataset].keys()]
-
-    def fields(self, year, flat=False):
+    @supported_years()
+    def fields(self, year=None, flat=False):
+        if year is None:
+            year = self.default_year
 
         data = {}
 
-        fields_url = DEFINITIONS[self.dataset].get(str(year))
+        fields_url = self.definitions_url % (year, self.dataset)
 
-        if not fields_url:
-            raise CensusException('%s is not available for %s' % (self.dataset, year))
-
-        resp = requests.get(fields_url)
-        doc = XML(resp.text)
+        resp = self.session.get(fields_url)
+        obj = resp.json()
 
         if flat:
 
-            for elem in doc.iter('variable'):
-                data[elem.attrib['name']] = "%s: %s" % (elem.attrib['concept'], elem.text)
+            for key, elem in obj['variables'].items():
+                if key in ['for', 'in']:
+                    continue
+                data[key] = "{}: {}".format(elem['concept'], elem['label'])
 
         else:
 
-            for concept_elem in doc.iter('concept'):
-
-                concept = concept_elem.attrib['name']
-                variables = {}
-
-                for variable_elem in concept_elem.iter('variable'):
-                    variables[variable_elem.attrib['name']] = variable_elem.text
-
-                data[concept] = variables
+            data = obj['variables']
+            if 'for' in data:
+                data.pop("for", None)
+            if 'in' in data:
+                data.pop("in", None)
 
         return data
 
-    def get(self, fields, geo, year=None):
+    def get(self, fields, geo, year=None, **kwargs):
+        all_results = (self.query(fifty_fields, geo, year, **kwargs)
+                       for fifty_fields in chunks(fields, 50))
+        merged_results = [merge(result) for result in zip(*all_results)]
 
-        if len(fields) > 50:
-            raise CensusException("only 50 columns per call are allowed")
+        return merged_results
+
+
+    def query(self, fields, geo, year=None, **kwargs):
 
         if year is None:
             year = self.default_year
 
         fields = list_or_str(fields)
 
-        url = ENDPOINT_URL % (year, self.dataset)
+        url = self.endpoint_url % (year, self.dataset)
 
         params = {
             'get': ",".join(fields),
@@ -129,14 +125,11 @@ class Client(object):
         if 'in' in geo:
             params['in'] = geo['in']
 
-        headers = {
-            'User-Agent': 'python-census/%s github.com/sunlightlabs/census' % __version__
-        }
-        resp = self.session.get(url, params=params, headers=headers)
+        resp = self.session.get(url, params=params)
 
         if resp.status_code == 200:
             try:
-                data = json.loads(resp.text)
+                data = resp.json()
             except ValueError as ex:
                 if '<title>Invalid Key</title>' in resp.text:
                     raise APIKeyError(' '.join(resp.text.splitlines()))
@@ -152,226 +145,243 @@ class Client(object):
         else:
             raise CensusException(resp.text)
 
+    @supported_years()        
+    def us(self, fields, **kwargs):
+        return self.get(fields, geo={'for': 'us:1'}, **kwargs)
+
+    @supported_years()    
+    def state(self, fields, state_fips, **kwargs):
+        return self.get(fields, geo={
+            'for': 'state:{}'.format(state_fips),
+        }, **kwargs)
+
+    @supported_years()    
+    def state_county(self, fields, state_fips, county_fips, **kwargs):
+        return self.get(fields, geo={
+            'for': 'county:{}'.format(county_fips),
+            'in': 'state:{}'.format(state_fips),
+        }, **kwargs)
+
+    @supported_years()    
+    def state_place(self, fields, state_fips, place, **kwargs):
+        return self.get(fields, geo={
+            'for': 'place:{}'.format(place),
+            'in': 'state:{}'.format(state_fips),
+        }, **kwargs)
+
+    @supported_years()
+    def state_district(self, fields, state_fips, district, **kwargs):
+        return self.get(fields, geo={
+            'for': 'congressional district:{}'.format(district),
+            'in': 'state:{}'.format(state_fips),
+        }, **kwargs)
 
 class ACS5Client(Client):
 
-    default_year = 2013
+    default_year = 2015
     dataset = 'acs5'
 
-    @supported_years(2013, 2012, 2011, 2010)
-    def us(self, fields, **kwargs):
-        return self.get(fields, geo={'for': 'us:1'}, **kwargs)
+    years = (2015, 2014, 2013, 2012, 2011, 2010, 2009)
 
-    @supported_years(2013, 2012, 2011, 2010)
-    def state(self, fields, state_fips, **kwargs):
+    @supported_years()
+    def state_county_subdivision(self, fields, state_fips,
+                                 county_fips, subdiv_fips, **kwargs):
         return self.get(fields, geo={
-            'for': 'state:%s' % state_fips,
+            'for': 'county subdivision:{}'.format(subdiv_fips),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
         }, **kwargs)
 
-    @supported_years(2013, 2012, 2011, 2010)
-    def state_county(self, fields, state_fips, county_fips, **kwargs):
+    @supported_years()
+    def state_county_tract(self, fields, state_fips,
+                           county_fips, tract, **kwargs):
         return self.get(fields, geo={
-            'for': 'county:%s' % county_fips,
-            'in': 'state:%s' % state_fips,
+            'for': 'tract:{}'.format(tract),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
         }, **kwargs)
 
-    @supported_years(2013, 2012, 2011, 2010)
-    def state_county_subdivision(self, fields, state_fips, county_fips, subdiv_fips, **kwargs):
-        return self.get(fields, geo={
-            'for': 'county subdivision:%s' % subdiv_fips,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2013, 2012, 2011, 2010)
-    def state_county_tract(self, fields, state_fips, county_fips, tract, **kwargs):
-        return self.get(fields, geo={
-            'for': 'tract:%s' % tract,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2013, 2012, 2011, 2010)
-    def state_county_blockgroup(self, fields, state_fips, county_fips, blockgroup, **kwargs):
-        return self.get(fields, geo={
-            'for': 'block group:%s' % blockgroup,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2013, 2012, 2011, 2010)
-    def state_place(self, fields, state_fips, place, **kwargs):
-        return self.get(fields, geo={
-            'for': 'place:%s' % place,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
-
-    @supported_years(2013, 2012, 2011, 2010)
-    def state_district(self, fields, state_fips, district, **kwargs):
-        return self.get(fields, geo={
-            'for': 'congressional district:%s' % district,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
-
-    @supported_years(2013, 2012, 2011)
+    @supported_years()
+    def state_county_blockgroup(self, fields, state_fips, county_fips,
+                                blockgroup, tract=None, **kwargs):
+        geo = {
+            'for': 'block group:{}'.format(blockgroup),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
+        }
+        if tract:
+            geo['in'] += ' tract:{}'.format(tract)
+        return self.get(fields, geo=geo, **kwargs)
+    
+    @supported_years(2015, 2014, 2013, 2012, 2011)
     def zipcode(self, fields, zcta, **kwargs):
         return self.get(fields, geo={
-            'for': 'zip code tabulation area:%s' % zcta,
+            'for': 'zip code tabulation area:{}'.format(zcta),
         }, **kwargs)
 
-class ACS1DpClient(Client):
+class ACS5DpClient(ACS5Client):    
 
-    default_year = 2012
+    dataset = 'acs5/profile'
+
+    years = (2015, 2014, 2013, 2012)
+
+
+class ACS3Client(Client):
+
+    default_year = 2013
+    dataset = 'acs3'
+
+    years = (2013, 2012)
+
+    @supported_years()
+    def state_county_subdivision(self, fields, state_fips,
+                                 county_fips, subdiv_fips, **kwargs):
+        return self.get(fields, geo={
+            'for': 'county subdivision:{}'.format(subdiv_fips),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
+        }, **kwargs)
+
+class ACS3DpClient(ACS3Client):
+
+    dataset = 'acs3/profile'
+    
+
+class ACS1Client(Client):
+
+    default_year = 2015
+    dataset = 'acs1'
+
+    years = (2015, 2014, 2013, 2012, 2011)
+
+    @supported_years()
+    def state_county_subdivision(self, fields, state_fips,
+                                 county_fips, subdiv_fips, **kwargs):
+        return self.get(fields, geo={
+            'for': 'county subdivision:{}'.format(subdiv_fips),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
+        }, **kwargs)
+
+class ACS1DpClient(ACS1Client):
+
     dataset = 'acs1/profile'
 
-    @supported_years(2012)
-    def us(self, fields, **kwargs):
-        return self.get(fields, geo={'for': 'us:1'}, **kwargs)
+    years = (2015, 2014, 2013, 2012)
 
-    @supported_years(2012)
-    def state(self, fields, state_fips, **kwargs):
-        return self.get(fields, geo={
-            'for': 'state:%s' % state_fips,
-        }, **kwargs)
-
-    @supported_years(2012)
-    def state_district(self, fields, state_fips, district, **kwargs):
-        return self.get(fields, geo={
-            'for': 'congressional district:%s' % district,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
 
 class SF1Client(Client):
 
     default_year = 2010
     dataset = 'sf1'
 
-    @supported_years(2010, 2000, 1990)
-    def state(self, fields, state_fips, **kwargs):
+    years = (2010, 2000, 1990)
+
+    @supported_years()
+    def state_county_subdivision(self, fields, state_fips,
+                                 county_fips, subdiv_fips, **kwargs):
         return self.get(fields, geo={
-            'for': 'state:%s' % state_fips,
+            'for': 'county subdivision:{}'.format(subdiv_fips),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
         }, **kwargs)
 
-    @supported_years(2010, 2000, 1990)
-    def state_county(self, fields, state_fips, county_fips, **kwargs):
+    @supported_years()
+    def state_county_tract(self, fields, state_fips,
+                           county_fips, tract, **kwargs):
         return self.get(fields, geo={
-            'for': 'county:%s' % county_fips,
-            'in': 'state:%s' % state_fips,
+            'for': 'tract:{}'.format(tract),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
         }, **kwargs)
 
-    @supported_years(2010)
-    def state_county_subdivision(self, fields, state_fips, county_fips, subdiv_fips, **kwargs):
-        return self.get(fields, geo={
-            'for': 'county subdivision:%s' % subdiv_fips,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2010, 2000, 1990)
-    def state_county_tract(self, fields, state_fips, county_fips, tract, **kwargs):
-        return self.get(fields, geo={
-            'for': 'tract:%s' % tract,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2010, 2000, 1990)
-    def state_county_blockgroup(self, fields, state_fips, county_fips, blockgroup, **kwargs):
-        return self.get(fields, geo={
-            'for': 'block group:%s' % blockgroup,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2010, 2000, 1990)
-    def state_place(self, fields, state_fips, place, **kwargs):
-        return self.get(fields, geo={
-            'for': 'place:%s' % place,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
-
-    @supported_years(2010)
-    def state_district(self, fields, state_fips, district, **kwargs):
-        return self.get(fields, geo={
-            'for': 'congressional district:%s' % district,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
+    @supported_years()
+    def state_county_blockgroup(self, fields, state_fips, county_fips,
+                                blockgroup, tract=None, **kwargs):
+        geo = {
+            'for': 'block group:{}'.format(blockgroup),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
+        }
+        if tract:
+            geo['in'] += ' tract:{}'.format(tract)
+        return self.get(fields, geo=geo, **kwargs)
 
     @supported_years(2010)
     def state_msa(self, fields, state_fips, msa, **kwargs):
         return self.get(fields, geo={
-            'for': 'metropolitan statistical area/micropolitan statistical area:%s' % msa,
-            'in': 'state:%s' % state_fips,
+            'for': ('metropolitan statistical area/' +
+                    'micropolitan statistical area:{}'.format(msa)),
+            'in': 'state:{}'.format(state_fips),
         }, **kwargs)
 
     @supported_years(2010)
     def state_csa(self, fields, state_fips, csa, **kwargs):
         return self.get(fields, geo={
-            'for': 'combined statistical area:%s' % csa,
-            'in': 'state:%s' % state_fips,
+            'for': 'combined statistical area:{}'.format(csa),
+            'in': 'state:{}'.format(state_fips),
         }, **kwargs)
 
     @supported_years(2010)
-    def state_district_place(self, fields, state_fips, district, place, **kwargs):
+    def state_district_place(self, fields, state_fips,
+                             district, place, **kwargs):
         return self.get(fields, geo={
-            'for': 'place:' % place,
-            'in': 'state:%s congressional district:%s' % (state_fips, district),
+            'for': 'place:{}'.format(place),
+            'in': 'state:{} congressional district:{}'.format(
+                state_fips, district),
         }, **kwargs)
 
     @supported_years(2010)
     def state_zipcode(self, fields, state_fips, zcta, **kwargs):
         return self.get(fields, geo={
-            'for': 'zip code tabulation area:%s' % zcta,
-            'in': 'state:%s' % state_fips,
+            'for': 'zip code tabulation area:{}'.format(zcta),
+            'in': 'state:{}'.format(state_fips),
         }, **kwargs)
-
 
 class SF3Client(Client):
 
     default_year = 2000
     dataset = 'sf3'
 
-    @supported_years(2000, 1990)
-    def state(self, fields, state_fips, **kwargs):
+    years = (2000, 1990)
+
+    @supported_years()
+    def state_county_tract(self, fields, state_fips,
+                           county_fips, tract, **kwargs):
         return self.get(fields, geo={
-            'for': 'state:%s' % state_fips,
+            'for': 'tract:{}'.format(tract),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
         }, **kwargs)
 
-    @supported_years(2000, 1990)
-    def state_county(self, fields, state_fips, county_fips, **kwargs):
-        return self.get(fields, geo={
-            'for': 'county:%s' % county_fips,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
-
-    @supported_years(2000, 1990)
-    def state_county_tract(self, fields, state_fips, county_fips, tract, **kwargs):
-        return self.get(fields, geo={
-            'for': 'tract:%s' % tract,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2000, 1990)
-    def state_county_blockgroup(self, fields, state_fips, county_fips, blockgroup, **kwargs):
-        return self.get(fields, geo={
-            'for': 'block group:%s' % blockgroup,
-            'in': 'state:%s county:%s' % (state_fips, county_fips),
-        }, **kwargs)
-
-    @supported_years(2000, 1990)
-    def state_place(self, fields, state_fips, place, **kwargs):
-        return self.get(fields, geo={
-            'for': 'place:%s' % place,
-            'in': 'state:%s' % state_fips,
-        }, **kwargs)
-
+    @supported_years()
+    def state_county_blockgroup(self, fields, state_fips, county_fips,
+                                blockgroup, tract=None, **kwargs):
+        geo = {
+            'for': 'block group:{}'.format(blockgroup),
+            'in': 'state:{} county:{}'.format(state_fips, county_fips),
+        }
+        if tract:
+            geo['in'] += ' tract:{}'.format(tract)
+        return self.get(fields, geo=geo, **kwargs)
 
 class Census(object):
 
     ALL = ALL
 
     def __init__(self, key, year=None, session=None):
-        import requests
 
         if not session:
-            session = requests.session()
+            session = new_session()
 
-        self.acs = ACS5Client(key, year, session)
+        self.session = session
+        self.session.headers.update({
+            'User-Agent': ('python-census/{} '.format(__version__) +
+                           'github.com/datamade/census')
+        })
+
+        self._acs = ACS5Client(key, year, session)  # deprecated
         self.acs5 = ACS5Client(key, year, session)
+        self.acs3 = ACS3Client(key, year, session)
+        self.acs1 = ACS1Client(key, year, session)
+        self.acs5dp = ACS5DpClient(key, year, session)
+        self.acs3dp = ACS3DpClient(key, year, session)
         self.acs1dp = ACS1DpClient(key, year, session)
         self.sf1 = SF1Client(key, year, session)
         self.sf3 = SF3Client(key, year, session)
+
+    @property
+    def acs(self):
+        warnings.warn('Use acs5 instead of acs', DeprecationWarning)
+        return self._acs

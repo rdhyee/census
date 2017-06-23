@@ -9,8 +9,10 @@ setup(
     py_modules=['census'],
     author="Jeremy Carbaugh",
     author_email='jcarbaugh@sunlightfoundation.com',
+    maintainer='Forest Gregg',
+    maintainer_email='fgregg@gmail.com',
     license="BSD",
-    url="http://github.com/sunlightlabs/census",
+    url="http://github.com/datamade/census",
     long_description=long_description,
     packages=find_packages(),
     description="A wrapper for the US Census Bureau's API",
@@ -23,5 +25,5 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python",
     ],
-    install_requires=['requests>=1.1.0', 'us>=0.7'],
+    install_requires=['requests>=1.1.0'],
 )

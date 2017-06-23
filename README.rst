@@ -1,16 +1,31 @@
 ======
 census
 ======
+.. image:: https://travis-ci.org/datamade/census.svg?branch=master
+    :target: https://travis-ci.org/datamade/census
 
 A simple wrapper for the United States Census Bureau's API.
 
 Provides access to ACS, SF1, and SF3 data sets.
 
+Install
+=======
+
+::
+
+    pip install census
+
+You may also want to install a complementary library, `us <https://pypi.python.org/pypi/us>`_, which help you figure out the
+`FIPS <https://en.wikipedia.org/wiki/Federal_Information_Processing_Standard_state_code>`_ codes for many geographies. We use it in the examples below.
+
+::
+
+   pip install us
 
 Usage
 =====
 
-First, get yourself a `Census API key <http://www.census.gov/developers/>`_.
+First, get yourself a `Census API key <https://www.census.gov/developers/>`_.
 
 ::
 
@@ -18,13 +33,14 @@ First, get yourself a `Census API key <http://www.census.gov/developers/>`_.
     from us import states
 
     c = Census("MY_API_KEY")
-    c.acs.get(('NAME', 'B25034_010E'), {'for': 'state:%s' % states.MD.fips})
+    c.acs5.get(('NAME', 'B25034_010E'),
+              {'for': 'state:{}'.format(states.MD.fips)})
 
 The call above will return the name of the geographic area and the number of
 homes that were built before 1939 for the state of Maryland. Helper methods have
 been created to simplify common geometry calls::
 
-    c.acs.state(('NAME', 'B25034_010E'), states.MD.fips)
+    c.acs5.state(('NAME', 'B25034_010E'), states.MD.fips)
 
 Full details on geometries and the states module can be found below.
 
@@ -34,10 +50,10 @@ second parameter is a geoemtry dict with a `for` key and on option `in` key. The
 `for` argument accepts a `"*"` wildcard character or `Census.ALL`. The wildcard
 is not valid for the `in` parameter.
 
-The default year is 2013. To access earlier data, pass a year parameter to the
+The default year is 2014. To access earlier data, pass a year parameter to the
 API call::
 
-    c.acs.state(('NAME', 'B25034_010E'), states.MD.fips, year=2010)
+    c.acs5.state(('NAME', 'B25034_010E'), states.MD.fips, year=2010)
 
 The default year may also be set client-wide::
 
@@ -47,26 +63,26 @@ The default year may also be set client-wide::
 Datasets
 ========
 
-* ACS5: ACS 5 Year Estimates (2013, 2012, 2011, 2010)
-* ACS1DP: ACS 1 Year Estimates, Data Profiles (2012)
-* SF1: Census Summary File 1 (2010, 2000, 1990)
-* SF3: Census Summary File 3 (2000, 1990)
+* acs5: ACS 5 Year Estimates (2014, 2013, 2012, 2011, 2010)
+* acs1dp: ACS 1 Year Estimates, Data Profiles (2012)
+* sf1: Census Summary File 1 (2010, 2000, 1990)
+* sf3: Census Summary File 3 (2000, 1990)
 
 
 Geographies
 ===========
 
 The API supports a wide range of geographic regions. The specification of these
-can be quite complicated so a number of convenience methods are provided. Refer to the `Census API documentation <http://www.census.gov/developers/data/>`_
+can be quite complicated so a number of convenience methods are provided. Refer to the `Census API documentation <https://www.census.gov/developers/data/>`_
 for more geographies beyond the convenience methods.
 
 *Not all geographies are supported in all years. Calling a convenience method
 with a year that is not supported will raise census.UnsupportedYearException.*
 
-`Geographic relationship files <http://www.census.gov/geo/maps-data/data/relationship.html>`_ are provided on the Census developer site as a tool to help users compare the geographies from the 1990, 2000 and 2010 Censuses. From these files, data users may determine how geographies from one Census relate to those from the prior Census.
+`Geographic relationship files <https://www.census.gov/geo/maps-data/data/relationship.html>`_ are provided on the Census developer site as a tool to help users compare the geographies from the 1990, 2000 and 2010 Censuses. From these files, data users may determine how geographies from one Census relate to those from the prior Census.
 
 ACS5 Geographies
---------------
+----------------
 
 * state(fields, state_fips)
 * state_county(fields, state_fips, county_fips)
@@ -79,14 +95,14 @@ ACS5 Geographies
 * zipcode(fields, zip5)
 
 ACS1 Geographies
---------------
+----------------
 
 * state(fields, state_fips)
 * state_district(fields, state_fips, district)
 * us(fields)
 
 SF1 Geographies
---------------
+---------------
 
 * state(fields, state_fips)
 * state_county(fields, state_fips, county_fips)
@@ -145,7 +161,8 @@ Examples
 
 The geographic name for all census tracts for county 170 in Alaska::
 
-    c.sf1.get('NAME', geo={'for': 'tract:*', 'in': 'state:%s county:170' % states.AK.fips})
+    c.sf1.get('NAME', geo={'for': 'tract:*',
+                           'in': 'state:{} county:170'.format(states.AK.fips)})
 
 The same call using the `state_county_tract` convenience method::
 
@@ -153,8 +170,8 @@ The same call using the `state_county_tract` convenience method::
 
 Total number of males age 5 - 9 for all states::
 
-    c.acs.get('B01001_004E', {'for': 'state:*'})
+    c.acs5.get('B01001_004E', {'for': 'state:*'})
 
 The same call using the state convenience method::
 
-    c.acs.state('B01001_004E', Census.ALL)
+    c.acs5.state('B01001_004E', Census.ALL)
