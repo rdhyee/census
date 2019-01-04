@@ -25,7 +25,7 @@ You may also want to install a complementary library, `us <https://pypi.python.o
 Usage
 =====
 
-First, get yourself a `Census API key <https://www.census.gov/developers/>`_.
+First, get yourself a `Census API key <https://api.census.gov/data/key_signup.html>`_.
 
 ::
 
@@ -50,7 +50,7 @@ second parameter is a geoemtry dict with a `for` key and on option `in` key. The
 `for` argument accepts a `"*"` wildcard character or `Census.ALL`. The wildcard
 is not valid for the `in` parameter.
 
-The default year is 2014. To access earlier data, pass a year parameter to the
+The default year is 2016. To access earlier data, pass a year parameter to the
 API call::
 
     c.acs5.state(('NAME', 'B25034_010E'), states.MD.fips, year=2010)
@@ -63,8 +63,8 @@ The default year may also be set client-wide::
 Datasets
 ========
 
-* acs5: ACS 5 Year Estimates (2014, 2013, 2012, 2011, 2010)
-* acs1dp: ACS 1 Year Estimates, Data Profiles (2012)
+* acs5: ACS 5 Year Estimates (2016, 2015, 2014, 2013, 2012, 2011, 2010)
+* acs1dp: ACS 1 Year Estimates, Data Profiles (2016, 2015, 2014, 2013, 2012)
 * sf1: Census Summary File 1 (2010, 2000, 1990)
 * sf3: Census Summary File 3 (2000, 1990)
 
@@ -73,7 +73,7 @@ Geographies
 ===========
 
 The API supports a wide range of geographic regions. The specification of these
-can be quite complicated so a number of convenience methods are provided. Refer to the `Census API documentation <https://www.census.gov/developers/data/>`_
+can be quite complicated so a number of convenience methods are provided. Refer to the `Census API documentation <https://www.census.gov/data/developers/guidance/api-user-guide.html>`_
 for more geographies beyond the convenience methods.
 
 *Not all geographies are supported in all years. Calling a convenience method
@@ -90,7 +90,9 @@ ACS5 Geographies
 * state_county_subdivision(fields, state_fips, county_fips, subdiv_fips)
 * state_county_tract(fields, state_fips, county_fips, tract)
 * state_place(fields, state_fips, place)
-* state_district(fields, state_fips, district)
+* state_congressional_district(fields, state_fips, congressional_district)
+* state_legislative_district_upper(fields, state_fips, legislative_district)
+* state_legislative_district_lower(fields, state_fips, legislative_district)
 * us(fields)
 * zipcode(fields, zip5)
 
@@ -98,7 +100,7 @@ ACS1 Geographies
 ----------------
 
 * state(fields, state_fips)
-* state_district(fields, state_fips, district)
+* state_congressional_district(fields, state_fips, district)
 * us(fields)
 
 SF1 Geographies
@@ -109,7 +111,7 @@ SF1 Geographies
 * state_county_subdivision(fields, state_fips, county_fips, subdiv_fips)
 * state_county_tract(fields, state_fips, county_fips, tract)
 * state_place(fields, state_fips, place)
-* state_district(fields, state_fips, district)
+* state_congressional_district(fields, state_fips, district)
 * state_msa(fields, state_fips, msa)
 * state_csa(fields, state_fips, csa)
 * state_district_place(fields, state_fips, district, place)
@@ -175,3 +177,7 @@ Total number of males age 5 - 9 for all states::
 The same call using the state convenience method::
 
     c.acs5.state('B01001_004E', Census.ALL)
+
+Don't know the list of tables in a survey, try this:
+
+    c.acs5.tables()
